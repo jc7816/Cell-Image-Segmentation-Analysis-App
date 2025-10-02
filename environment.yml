@@ -1,12 +1,23 @@
-name: cellpose_app  # Name of the conda environment
+name: cellpose_v1_gpu  # Name of the conda environment
 channels:
-  - conda-forge     # Use conda-forge as the primary channel
-  - defaults
+  - conda-forge        # Primary channel for packages
+  - defaults           # Secondary channel for packages
+  - pytorch            # PyTorch channel for GPU/CPU support
 dependencies:
-  - python=3.11     # Specify Python version
-  - cellpose        # Cellpose for cell segmentation
-  - numpy           # Numerical computing library
-  - matplotlib      # Plotting and visualization
-  - scikit-image    # Image processing library
-  - pip             # Include pip for installing pip-only packages
-  - pip:
+  - python=3.8.5               # Specify the Python version
+  - numpy>=1.20.0              # Numerical computing library
+  - numba>=0.43.1              # JIT compiler for fast numerical computation
+  - scipy                      # Scientific computing library
+  - opencv                     # Computer vision library (with GUI support)
+  - pyqt                       # GUI library for Python
+  - pyqtgraph>=0.11.0rc0       # Plotting library for PyQt
+  - natsort                    # Natural sorting library for Python
+  - tqdm                       # Progress bar library
+  - tifffile                   # TIFF file support
+  - fastremap                  # Fast array remapping
+  - cellpose==1.0.2            # Cellpose v1 for cell segmentation
+  - pytorch=1.10.2             # Fixed PyTorch version for compatibility
+  - torchvision                # PyTorch vision utilities
+  - torchaudio                 # PyTorch audio utilities
+  - cudatoolkit=11.1           # CUDA toolkit version to match your driver
+  - matplotlib                 # Plotting library for Python
