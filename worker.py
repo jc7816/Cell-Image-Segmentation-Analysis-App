@@ -1,4 +1,4 @@
-# worker.py — Cellpose v1.0.2 compatible worker with overlay output (models: cyto / nuclei)
+# worker.py — CPU-only Cellpose v1.0.2 worker with mean cell area and overlay output
 import os
 import numpy as np
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -6,15 +6,26 @@ from cellpose import models, io, utils
 
 
 class ProcessingThread(QThread):
-    """Background processing thread that runs Cellpose segmentation."""
-    finished = pyqtSignal(object)   # Emits dict: {cell_count, mask_path, overlay_path}
-    error = pyqtSignal(str)         # Emits error message
+    """
+    Background processing thread that runs Cellpose segmentation on CPU.
+
+    Emits:
+        finished(dict): {
+            "cell_count": int,
+            "mean_area_px": float,
+            "mask_path": str,
+            "overlay_path": str
+        }
+        error(str): error message
+    """
+    finished = pyqtSignal(object)
+    error = pyqtSignal(str)
 
     def __init__(self, image_path, diameter=None, model="cyto", output_folder="."):
         super().__init__()
         self.image_path = image_path
-        self.diameter = diameter
-        self.model = model  # expected: "cyto" or "nuclei"
+        self.diameter = diameter        # currently not used (None), kept for future extension
+        self.model = model              # "cyto" or "nuclei"
         self.output_folder = output_folder or "."
         self._is_running = True
 
@@ -31,17 +42,12 @@ class ProcessingThread(QThread):
             if img is None:
                 raise ValueError("Failed to read image (io.imread returned None)")
 
-            # --- GPU check ---
-            try:
-                import torch
-                use_gpu = bool(torch.cuda.is_available())
-            except Exception:
-                use_gpu = False
+            # --- Force CPU (no GPU for now) ---
+            use_gpu = False
             print(f"[Worker] Using GPU: {use_gpu}")
 
             # --- Select model class for 1.0.2 compatibility ---
             ModelClass = models.CellposeModel if hasattr(models, "CellposeModel") else models.Cellpose
-
             cp_model = ModelClass(gpu=use_gpu, model_type=self.model)
 
             # --- Segmentation ---
@@ -57,7 +63,20 @@ class ProcessingThread(QThread):
                 return
 
             mask = masks[0]
-            cell_count = int(mask.max())
+
+            # ---- Compute cell_count and mean area in pixels ----
+            # labels: unique values in mask, counts: number of pixels for each label
+            labels, counts = np.unique(mask, return_counts=True)
+            # first label is usually background (0), skip it
+            if labels.size > 0 and labels[0] == 0:
+                labels = labels[1:]
+                counts = counts[1:]
+
+            cell_count = int(len(labels))
+            if cell_count > 0 and counts.size > 0:
+                mean_area_px = float(counts.mean())  # average number of pixels per cell
+            else:
+                mean_area_px = 0.0
 
             # --- Save results ---
             base = os.path.splitext(os.path.basename(self.image_path))[0]
@@ -72,11 +91,12 @@ class ProcessingThread(QThread):
 
             result = {
                 "cell_count": cell_count,
-                "mask_path": mask_path,        # UI will delete this after showing overlay
+                "mean_area_px": mean_area_px,
+                "mask_path": mask_path,        # UI may delete this after showing overlay
                 "overlay_path": overlay_path
             }
 
-            print(f"[Worker] Done. Cells: {cell_count}")
+            print(f"[Worker] Done. Cells: {cell_count}, Mean area: {mean_area_px:.2f} px^2")
             self.finished.emit(result)
 
         except Exception as e:
@@ -92,9 +112,13 @@ class ProcessingThread(QThread):
     def _make_overlay(self, img, outlines_bool):
         """
         Create an RGB overlay image with red boundaries drawn on top of the original.
-        - img: np.ndarray, shape (H, W) or (H, W, C)
-        - outlines_bool: np.ndarray, shape (H, W), True indicates boundary pixels
-        Returns uint8 RGB array.
+
+        Args:
+            img (np.ndarray): shape (H, W) or (H, W, C)
+            outlines_bool (np.ndarray): shape (H, W), True indicates boundary pixels
+
+        Returns:
+            np.ndarray: uint8 RGB array
         """
         # Normalize to uint8 RGB
         if img.ndim == 2:

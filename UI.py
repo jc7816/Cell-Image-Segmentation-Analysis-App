@@ -1,7 +1,7 @@
-# UI.py — Clean version, no scale bar, no diameter input.
+# UI.py — Clean UI with cell count and mean area (px^2 and µm^2), fixed model.
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout,
-    QHBoxLayout, QComboBox, QFileDialog, QMessageBox, QApplication
+    QHBoxLayout, QFileDialog, QMessageBox, QApplication, QLineEdit
 )
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
@@ -10,7 +10,18 @@ from worker import ProcessingThread
 
 
 class CellposeApp(QMainWindow):
-    """PyQt5 application for Cellpose-based segmentation with threaded worker (CPU-only)."""
+    """
+    PyQt5 application for Cellpose-based segmentation with threaded worker (CPU-only).
+
+    Features:
+        - Drag & drop or click to upload an image.
+        - Fixed Cellpose model (e.g. cyto) for simplicity.
+        - Choose an output folder.
+        - Optional pixel size input to convert mean area from px^2 to µm^2.
+        - Run Cellpose in a background thread.
+        - Show original image (left) and overlay result (right).
+        - Show cell count and mean area (px^2 and optionally µm^2).
+    """
     def __init__(self):
         super().__init__()
 
@@ -39,23 +50,26 @@ class CellposeApp(QMainWindow):
         self.image_label.setFixedHeight(320)
 
         # Result image area
-        self.result_label = QLabel("Result will appear here")
+        self.result_label = QLabel("Segmentation Result will appear here")
         self.result_label.setAlignment(Qt.AlignCenter)
-        self.result_label.setStyleSheet("border: 2px dashed gray; color: gray; font-style: italic;")
+        self.result_label.setStyleSheet(
+            "border: 2px dashed gray; color: gray; font-style: italic;"
+        )
         self.result_label.setFixedHeight(320)
 
         self.preview_row.addWidget(self.image_label, 1)
         self.preview_row.addWidget(self.result_label, 1)
         self.layout.addLayout(self.preview_row)
 
-        # Inline result info
-        self.result_info = QLabel("Cells: —")
+        # Inline result info (cell count + areas) with larger font
+        self.result_info = QLabel("Cells: —    Mean area: —")
         self.result_info.setAlignment(Qt.AlignCenter)
         self.result_info.setStyleSheet("""
             QLabel {
                 border: 1px solid #888;
-                padding: 6px 10px;
+                padding: 8px 12px;
                 font-weight: 700;
+                font-size: 24px;
                 color: #222;
                 background: #f6f6f6;
                 border-radius: 6px;
@@ -66,16 +80,12 @@ class CellposeApp(QMainWindow):
         # Accept drag & drop on the window
         self.setAcceptDrops(True)
 
-        # Model selector (translated to user-friendly choices)
-        model_layout = QHBoxLayout()
-        model_layout.addWidget(QLabel("What do you want to segment?"))
-        self.model_select = QComboBox()
-        self.model_select.addItems([
-            "Whole cells (cytoplasm + nuclei)",  # → cyto
-            "Nuclei only"                        # → nuclei
-        ])
-        model_layout.addWidget(self.model_select)
-        self.layout.addLayout(model_layout)
+        # Pixel size input (optional)
+        pixel_layout = QHBoxLayout()
+        pixel_layout.addWidget(QLabel("Pixel size (µm/pixel, optional):"))
+        self.pixel_size_input = QLineEdit()
+        pixel_layout.addWidget(self.pixel_size_input)
+        self.layout.addLayout(pixel_layout)
 
         # Output folder (button + label)
         output_layout = QHBoxLayout()
@@ -158,11 +168,6 @@ class CellposeApp(QMainWindow):
             self.output_path_label.repaint()
             QApplication.processEvents()
 
-    def get_model_type(self):
-        """Map user-friendly combo choice to internal Cellpose model name."""
-        idx = self.model_select.currentIndex()
-        return "cyto" if idx == 0 else "nuclei"
-
     def start_analysis(self):
         """Start background segmentation. Requires image and output folder."""
         if self.is_processing:
@@ -180,10 +185,11 @@ class CellposeApp(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please choose an output folder first!")
             return
 
-        # Diameter removed → always None
+        # Diameter removed → always None for now
         diameter = None
 
-        model = self.get_model_type()
+        # Fixed model for now (e.g. cyto)
+        model = "cyto"
 
         self.is_processing = True
         self.start_button.setEnabled(False)
@@ -200,11 +206,12 @@ class CellposeApp(QMainWindow):
         self.processing_thread.start()
 
     def on_processing_finished(self, results):
-        """Handle successful completion: show overlay/mask and inline count."""
+        """Handle successful completion: show overlay/mask and inline count + area."""
         self.is_processing = False
         self.start_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
 
+        # Show result image (prefer overlay, then mask)
         show_path = results.get("overlay_path") or results.get("mask_path")
         if show_path and os.path.exists(show_path):
             pix = QPixmap(show_path)
@@ -222,9 +229,34 @@ class CellposeApp(QMainWindow):
             self.result_label.setText("No result image found.")
             self.result_label.setStyleSheet("color: red;")
 
+        # Extract metrics
         cell_count = results.get("cell_count", 0)
-        self.result_info.setText(f"Cells: {cell_count}")
+        mean_area_px = results.get("mean_area_px", 0.0)
 
+        # Try to compute mean area in µm^2 if pixel size is provided
+        pixel_size_text = self.pixel_size_input.text().strip()
+        mean_area_um2 = None
+        if pixel_size_text:
+            try:
+                px_size = float(pixel_size_text)
+                if px_size > 0:
+                    mean_area_um2 = mean_area_px * (px_size ** 2)
+            except ValueError:
+                mean_area_um2 = None  # ignore invalid value, just show px^2
+
+        # Build result info text
+        if mean_area_um2 is not None:
+            text = (
+                f"Cells: {cell_count}    "
+                f"Mean area: {mean_area_px:.1f} px^2 "
+                f"({mean_area_um2:.2f} µm^2)"
+            )
+        else:
+            text = f"Cells: {cell_count}    Mean area: {mean_area_px:.1f} px^2"
+
+        self.result_info.setText(text)
+
+        # Auto-delete mask file after finishing (keep overlay for preview)
         mask_path = results.get("mask_path")
         if mask_path and os.path.exists(mask_path):
             try:
@@ -233,12 +265,14 @@ class CellposeApp(QMainWindow):
                 print(f"Warn: could not delete mask file: {e}")
 
     def on_processing_error(self, message):
+        """Handle errors from the worker."""
         self.is_processing = False
         self.start_button.setEnabled(True)
         self.cancel_button.setEnabled(False)
         QMessageBox.critical(self, "Error", f"Processing failed: {message}")
 
     def cancel_analysis(self):
+        """Request to stop the background worker."""
         if self.processing_thread and self.processing_thread.isRunning():
             self.processing_thread.stop()
             self.processing_thread.wait(1000)
