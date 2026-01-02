@@ -1,4 +1,4 @@
-# Cell Image Segmentation & Analysis App (Cellpose 1.0.2)
+# Cell Count App (Cellpose 1.0.2)
 This project is a desktop application for **cell image segmentation** and **quantitative cell analysis**, built using **Cellpose 1.0.2** and a custom **PyQt5 GUI**.
 
 Users can load a microscopy image, run segmentation in a CPU-only environment, and compute:
@@ -92,6 +92,7 @@ Stringer et al. (2021). Cellpose: a generalist algorithm for cellular segmentati
 Nature Methods.
 
 https://github.com/MouseLand/cellpose
+
 
 
 
